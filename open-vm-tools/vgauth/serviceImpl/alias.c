@@ -1087,7 +1087,6 @@ AliasStartElement(GMarkupParseContext *parseContext,
 {
    AliasParseList *list = (AliasParseList *) userData;
    ServiceAliasInfo *infos;
-   int n;
 
    ASSERT(list);
 
@@ -1132,6 +1131,8 @@ AliasStartElement(GMarkupParseContext *parseContext,
       break;
    case ALIAS_PARSE_STATE_ALIASINFOS:
       if (g_strcmp0(elementName, ALIASINFO_ALIASINFO_ELEMENT_NAME) == 0) {
+         int n;
+
          list->state = ALIAS_PARSE_STATE_ALIASINFO;
 
          // grow
@@ -1437,7 +1438,7 @@ AliasLoadAliases(const gchar *userName,
       NULL,
       NULL,
    };
-   GMarkupParseContext *context = NULL;
+   GMarkupParseContext *context;
    gboolean bRet;
    gchar *fileContents = NULL;
    gsize fileSize;
@@ -2234,7 +2235,10 @@ updateMap:
          Debug("%s: removed empty map file '%s'\n", __FUNCTION__, mapFilename);
          g_free(mapFilename);
 
-         goto done;
+         if (emptyAliasFile) {
+            goto done;
+         }
+         goto rename;
       }
 
       tmpMapFilename = g_strdup_printf("%s"DIRSEP"%sXXXXXX",
@@ -2328,6 +2332,7 @@ updateMap:
 #endif
    }
 
+rename:
    /*
     * Make the tmpfiles become the real in a way we can try to recover from.
     */

@@ -1,5 +1,5 @@
 /*********************************************************
- * Copyright (C) 1998-2019 VMware, Inc. All rights reserved.
+ * Copyright (C) 1998-2020 VMware, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published
@@ -63,6 +63,8 @@ extern "C" {
 
 /* Flags used by the hypercall interface. */
 
+#define BDOOR_FLAGS_LB    0
+#define BDOOR_FLAGS_READ  0
 #define BDOOR_FLAGS_HB    (1<<0)
 #define BDOOR_FLAGS_WRITE (1<<1)
 
@@ -234,9 +236,11 @@ extern "C" {
 #  define BDOOR_CMD_GI_TEST_MAPPING         130
 #  define BDOOR_CMD_GI_TEST_PPN             131
 #  define BDOOR_CMD_GI_MAX                  131
-#define   BDOOR_CMD_MKSSTATS_SNAPSHOT        88 /* Devel only. */
-#  define BDOOR_CMD_MKSSTATS_START            0
-#  define BDOOR_CMD_MKSSTATS_STOP             1
+#define   BDOOR_CMD_MKSTEST                  88 /* Devel only. */
+#  define BDOOR_CMD_MKSTEST_STATS_START       0
+#  define BDOOR_CMD_MKSTEST_STATS_STOP        1
+#  define BDOOR_CMD_MKSTEST_CASE_START        2
+#  define BDOOR_CMD_MKSTEST_CASE_STOP         3
 #define   BDOOR_CMD_SECUREBOOT               89
 #define   BDOOR_CMD_COPY_PHYSMEM             90 /* Devel only. */
 #define   BDOOR_CMD_STEALCLOCK               91 /* CPL 0 only. */

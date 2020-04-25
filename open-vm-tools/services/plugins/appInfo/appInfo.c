@@ -1,5 +1,5 @@
 /*********************************************************
- * Copyright (C) 2019 VMware, Inc. All rights reserved.
+ * Copyright (C) 2019-2020 VMware, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published
@@ -60,9 +60,9 @@ VM_EMBED_VERSION(VMTOOLSD_VERSION_STRING);
 #define MAX_APP_INFO_SIZE (62 * 1024)
 
 /**
- * Default poll interval for appInfo is 30m
+ * Default poll interval for appInfo is 6 hours
  */
-#define APP_INFO_POLL_INTERVAL (30 * 60)
+#define APP_INFO_POLL_INTERVAL (360 * 60)
 
 /**
  * Default value for CONFNAME_APPINFO_DISABLED setting in
@@ -73,16 +73,27 @@ VM_EMBED_VERSION(VMTOOLSD_VERSION_STRING);
 #define APP_INFO_CONF_DEFAULT_DISABLED_VALUE FALSE
 
 /**
+ * Default value for CONFNAME_APPINFO_USE_WMI setting in
+ * tools configuration file.
+ *
+ * TRUE will force the plugin to use WMI for getting
+ * the application version information.
+ */
+#define APP_INFO_CONF_USE_WMI_DEFAULT_VALUE    FALSE
+
+/**
  * Defines the current poll interval (in seconds).
  *
  * This value is controlled by the appinfo.poll-interval config file option.
  */
-int appInfoPollInterval = 0;
+static guint gAppInfoPollInterval = 0;
 
 /**
  * AppInfo gather loop timeout source.
  */
-static GSource *appInfoTimeoutSource = NULL;
+static GSource *gAppInfoTimeoutSource = NULL;
+
+static void TweakGatherLoop(ToolsAppCtx *ctx);
 
 
 /*
@@ -171,11 +182,12 @@ SetGuestInfo(ToolsAppCtx *ctx,              // IN:
    g_free(msg);
 
    if (!status) {
-      g_warning("Error sending RPC message: %s\n", reply ? reply : "NULL");
+      g_warning("%s: Error sending RPC message: %s\n", __FUNCTION__,
+                reply ? reply : "NULL");
       vm_free(reply);
       return FALSE;
    } else {
-      g_info("Successfully sent the app information.\n");
+      g_info("%s: Successfully sent the app information.\n", __FUNCTION__);
    }
 
    status = (*reply == '\0');
@@ -185,19 +197,83 @@ SetGuestInfo(ToolsAppCtx *ctx,              // IN:
 
 
 /*
+ *----------------------------------------------------------------------
+ * AppInfo_GetAppList --
+ *
+ * Generates the application information list.
+ *
+ * @param[in] config   Tools configuration dictionary.
+ *
+ * @retval Pointer to the newly allocated application list. The caller must
+ *         free the memory using AppInfoDestroyAppList function.
+ *         NULL if any error occurs.
+ *
+ *----------------------------------------------------------------------
+ */
+
+GSList *
+AppInfo_GetAppList(GKeyFile *config)     // IN
+{
+   GSList *appList = NULL;
+   int i;
+   ProcMgrProcInfoArray *procList = NULL;
+   size_t procCount;
+
+#ifdef _WIN32
+   Bool useWMI;
+#endif
+
+   procList = ProcMgr_ListProcesses();
+
+   if (procList == NULL) {
+      g_warning("%s: Failed to get the list of processes.\n", __FUNCTION__);
+      return appList;
+   }
+
+#ifdef _WIN32
+   useWMI =  VMTools_ConfigGetBoolean(config,
+                                      CONFGROUPNAME_APPINFO,
+                                      CONFNAME_APPINFO_USE_WMI,
+                                      APP_INFO_CONF_USE_WMI_DEFAULT_VALUE);
+
+   g_debug("%s: useWMI: %d", __FUNCTION__, useWMI);
+#endif
+
+   procCount = ProcMgrProcInfoArray_Count(procList);
+   for (i = 0; i < procCount; i++) {
+      AppInfo *appInfo;
+      ProcMgrProcInfo *procInfo = ProcMgrProcInfoArray_AddressOf(procList, i);
+#ifdef _WIN32
+      appInfo = AppInfo_GetAppInfo(procInfo, useWMI);
+#else
+      appInfo = AppInfo_GetAppInfo(procInfo);
+#endif
+      if (NULL != appInfo) {
+         appList = g_slist_prepend(appList, appInfo);
+      }
+   }
+
+   ProcMgr_FreeProcList(procList);
+
+   return appList;
+}
+
+
+/*
  *****************************************************************************
  * AppInfoGatherTask --
  *
  * Collects all the desired application related information and updates VMX.
  *
- * @param[in]  data     The application context.
+ * @param[in]  ctx     The application context.
+ * @param[in]  data    Unused
  *
  *****************************************************************************
  */
 
 static void
-AppInfoGatherTask(ToolsAppCtx *ctx,
-                  void *data)
+AppInfoGatherTask(ToolsAppCtx *ctx,    // IN
+                  gpointer data)       // IN
 {
    DynBuf dynBuffer;
    char tmpBuf[1024];
@@ -234,13 +310,13 @@ AppInfoGatherTask(ToolsAppCtx *ctx,
                       tstamp != NULL ? tstamp : "");
 
    if (len < 0) {
-      g_warning("Insufficient space for the header.\n");
+      g_warning("%s: Insufficient space for the header.\n", __FUNCTION__);
       goto abort;
    }
 
    DynBuf_Append(&dynBuffer, tmpBuf, len);
 
-   appList = AppInfo_SortAppList(AppInfo_GetAppList());
+   appList = AppInfo_SortAppList(AppInfo_GetAppList(ctx->config));
 
    for (appNode = appList; appNode != NULL; appNode = appNode->next) {
       size_t currentBufferSize = DynBuf_GetSize(&dynBuffer);
@@ -254,13 +330,15 @@ AppInfoGatherTask(ToolsAppCtx *ctx,
       escapedCmd = EscapeJSONString(appInfo->appName);
 
       if (NULL == escapedCmd) {
-         g_warning("Failed to escape the content of cmdName\n");
+         g_warning("%s: Failed to escape the content of cmdName.\n",
+                   __FUNCTION__);
          goto abort;
       }
 
       escapedVersion = EscapeJSONString(appInfo->version);
       if (NULL == escapedVersion) {
-         g_warning("Failed to escape the content of version information.\n");
+         g_warning("%s: Failed to escape the content of version information.\n",
+                   __FUNCTION__);
          goto abort;
       }
 
@@ -276,13 +354,15 @@ AppInfoGatherTask(ToolsAppCtx *ctx,
       }
 
       if (len < 0) {
-         g_warning("Insufficient space for the application information.\n");
+         g_warning("%s: Insufficient space for the application information.\n",
+                   __FUNCTION__);
          goto next_entry;
       }
 
       if (currentBufferSize + len + sizeof jsonSuffix > MAX_APP_INFO_SIZE) {
-         g_warning("Exceeded the max info packet size."
-                   " Truncating the rest of the applications.\n");
+         g_warning("%s: Exceeded the max info packet size."
+                   " Truncating the rest of the applications.\n",
+                   __FUNCTION__);
          break;
       }
 
@@ -312,25 +392,83 @@ abort:
  * AppInfoGather --
  *
  * Creates a new thread that collects all the desired application related
- * information and udates the VMX.
+ * information and updates the VMX. Tweaks the poll gather loop as per the
+ * tools configuration after creating the thread.
  *
  * @param[in]  data     The application context.
  *
- * @return TRUE to indicate that the timer should be rescheduled.
+ * @return G_SOURCE_REMOVE to indicate that the timer should be removed.
  *
  *****************************************************************************
  */
 
 static gboolean
-AppInfoGather(gpointer data)
+AppInfoGather(gpointer data)      // IN
 {
    ToolsAppCtx *ctx = data;
+
+   g_debug("%s: Submitting a task to capture application information.\n",
+           __FUNCTION__);
+
    if (!ToolsCorePool_SubmitTask(ctx, AppInfoGatherTask, NULL, NULL)) {
-      g_warning("%s: failed to start information gather thread\n",
-                __FUNCTION__);
+      g_warning("%s: Failed to submit the task for capturing application "
+                "information\n", __FUNCTION__);
    }
 
-   return TRUE;
+   TweakGatherLoop(ctx);
+
+   return G_SOURCE_REMOVE;
+}
+
+
+/*
+ *****************************************************************************
+ * TweakGatherLoopEx --
+ *
+ * Start, stop, reconfigure a AppInfo Gather poll loop.
+ *
+ * This function is responsible for creating, manipulating, and resetting a
+ * AppInfo Gather loop timeout source. The poll loop will be disabled if
+ * the poll interval is 0.
+ *
+ * @param[in]     ctx           The application context.
+ * @param[in]     pollInterval  Poll interval in seconds. A value of 0 will
+ *                              disable the loop.
+ *
+ *****************************************************************************
+ */
+
+static void
+TweakGatherLoopEx(ToolsAppCtx *ctx,       // IN
+                  guint pollInterval)     // IN
+{
+   if (gAppInfoTimeoutSource != NULL) {
+      /*
+       * Destroy the existing timeout source.
+       */
+      g_source_destroy(gAppInfoTimeoutSource);
+      gAppInfoTimeoutSource = NULL;
+   }
+
+   if (pollInterval > 0) {
+      if (gAppInfoPollInterval != pollInterval) {
+         g_info("%s: New value for %s is %us.\n",
+                __FUNCTION__,
+                CONFNAME_APPINFO_POLLINTERVAL,
+                pollInterval);
+      }
+
+      gAppInfoTimeoutSource = g_timeout_source_new(pollInterval * 1000);
+      VMTOOLSAPP_ATTACH_SOURCE(ctx, gAppInfoTimeoutSource,
+                               AppInfoGather, ctx, NULL);
+      g_source_unref(gAppInfoTimeoutSource);
+   } else if (gAppInfoPollInterval > 0) {
+      g_info("%s: Poll loop for %s disabled.\n",
+             __FUNCTION__, CONFNAME_APPINFO_POLLINTERVAL);
+      SetGuestInfo(ctx, APP_INFO_GUESTVAR_KEY, "");
+   }
+
+   gAppInfoPollInterval = pollInterval;
 }
 
 
@@ -338,88 +476,46 @@ AppInfoGather(gpointer data)
  *****************************************************************************
  * TweakGatherLoop --
  *
- * @brief Start, stop, reconfigure a GuestInfoGather poll loop.
+ * Configues the AppInfo Gather poll loop based on the settings in the
+ * tools configuration.
  *
  * This function is responsible for creating, manipulating, and resetting a
- * AppDiscoveryGather loop timeout source.
+ * AppInfo Gather loop timeout source.
  *
- * @param[in]     ctx           The app context.
- * @param[in]     enable        Whether to enable the gather loop.
+ * @param[in]     ctx           The application context.
  *
  *****************************************************************************
  */
 
 static void
-TweakGatherLoop(ToolsAppCtx *ctx,
-                gboolean enable)
+TweakGatherLoop(ToolsAppCtx *ctx)    // IN
 {
+   gboolean disabled =
+      VMTools_ConfigGetBoolean(ctx->config,
+                               CONFGROUPNAME_APPINFO,
+                               CONFNAME_APPINFO_DISABLED,
+                               APP_INFO_CONF_DEFAULT_DISABLED_VALUE);
+
    gint pollInterval = 0;
 
-   if (enable) {
-      pollInterval = APP_INFO_POLL_INTERVAL * 1000;
+   if (!disabled) {
+      pollInterval = VMTools_ConfigGetInteger(ctx->config,
+                                              CONFGROUPNAME_APPINFO,
+                                              CONFNAME_APPINFO_POLLINTERVAL,
+                                              APP_INFO_POLL_INTERVAL);
 
-      /*
-      * Check the config registry for custom poll interval,
-      * converting from seconds to milliseconds.
-      */
-      if (g_key_file_has_key(ctx->config, CONFGROUPNAME_APPINFO,
-                             CONFNAME_APPINFO_POLLINTERVAL, NULL)) {
-         GError *gError = NULL;
-
-         pollInterval = g_key_file_get_integer(ctx->config,
-                                               CONFGROUPNAME_APPINFO,
-                                               CONFNAME_APPINFO_POLLINTERVAL,
-                                               &gError);
-         pollInterval *= 1000;
-
-         if (pollInterval < 0 || gError) {
-            g_warning("Invalid %s.%s value. Using default %us.\n",
-                      CONFGROUPNAME_APPINFO,
-                      CONFNAME_APPINFO_POLLINTERVAL,
-                      APP_INFO_POLL_INTERVAL);
-            pollInterval = APP_INFO_POLL_INTERVAL * 1000;
-         }
-
-         g_clear_error(&gError);
+      if (pollInterval < 0) {
+         g_warning("%s: Invalid poll interval %d. Using default %us.\n",
+                   __FUNCTION__, pollInterval, APP_INFO_POLL_INTERVAL);
+         pollInterval = APP_INFO_POLL_INTERVAL;
       }
-   }
-
-   if (appInfoTimeoutSource != NULL) {
-      /*
-       * If the interval hasn't changed, let's not interfere with the existing
-       * timeout source.
-       */
-      if (pollInterval == appInfoPollInterval) {
-         ASSERT(pollInterval);
-         return;
-      }
-
-      /*
-       * Destroy the existing timeout source since the interval has changed.
-       */
-
-      g_source_destroy(appInfoTimeoutSource);
-      appInfoTimeoutSource = NULL;
    }
 
    /*
-    * All checks have passed.  Create a new timeout source and attach it.
+    * pollInterval can never be a negative value. Typecasting into
+    * guint should not be a problem.
     */
-   appInfoPollInterval = pollInterval;
-
-   if (appInfoPollInterval) {
-      g_info("New value for %s is %us.\n",
-             CONFNAME_APPINFO_POLLINTERVAL,
-             appInfoPollInterval / 1000);
-
-      appInfoTimeoutSource = g_timeout_source_new(appInfoPollInterval);
-      VMTOOLSAPP_ATTACH_SOURCE(ctx, appInfoTimeoutSource,
-                               AppInfoGather, ctx, NULL);
-      g_source_unref(appInfoTimeoutSource);
-   } else {
-      g_info("Poll loop for %s disabled.\n", CONFNAME_APPINFO_POLLINTERVAL);
-      SetGuestInfo(ctx, APP_INFO_GUESTVAR_KEY, "");
-   }
+   TweakGatherLoopEx(ctx, (guint) pollInterval);
 }
 
 
@@ -427,7 +523,7 @@ TweakGatherLoop(ToolsAppCtx *ctx,
  *****************************************************************************
  * AppInfoServerConfReload --
  *
- * @brief Reconfigures the poll loop interval upon config file reload.
+ * Reconfigures the poll loop interval upon config file reload.
  *
  * @param[in]  src     The source object.
  * @param[in]  ctx     The application context.
@@ -437,16 +533,13 @@ TweakGatherLoop(ToolsAppCtx *ctx,
  */
 
 static void
-AppInfoServerConfReload(gpointer src,
-                        ToolsAppCtx *ctx,
-                        gpointer data)
+AppInfoServerConfReload(gpointer src,       // IN
+                        ToolsAppCtx *ctx,   // IN
+                        gpointer data)      // IN
 {
-   gboolean disabled =
-      VMTools_ConfigGetBoolean(ctx->config,
-                               CONFGROUPNAME_APPINFO,
-                               CONFNAME_APPINFO_DISABLED,
-                               APP_INFO_CONF_DEFAULT_DISABLED_VALUE);
-   TweakGatherLoop(ctx, !disabled);
+   g_info("%s: Reloading the tools configuration.\n", __FUNCTION__);
+
+   TweakGatherLoop(ctx);
 }
 
 
@@ -457,23 +550,83 @@ AppInfoServerConfReload(gpointer src,
  * Cleanup internal data on shutdown.
  *
  * @param[in]  src     The source object.
- * @param[in]  ctx     Unused.
+ * @param[in]  ctx     Application context.
  * @param[in]  data    Unused.
  *
  *****************************************************************************
  */
 
 static void
-AppInfoServerShutdown(gpointer src,
-                      ToolsAppCtx *ctx,
-                      gpointer data)
+AppInfoServerShutdown(gpointer src,          // IN
+                      ToolsAppCtx *ctx,      // IN
+                      gpointer data)         // IN
 {
-   if (appInfoTimeoutSource != NULL) {
-      g_source_destroy(appInfoTimeoutSource);
-      appInfoTimeoutSource = NULL;
+   if (gAppInfoTimeoutSource != NULL) {
+      g_source_destroy(gAppInfoTimeoutSource);
+      gAppInfoTimeoutSource = NULL;
    }
 
    SetGuestInfo(ctx, APP_INFO_GUESTVAR_KEY, "");
+}
+
+
+/*
+ ******************************************************************************
+ * AppInfoServerReset --
+ *
+ * Callback function that gets called whenever the RPC channel gets reset.
+ * Disables the poll loop and sets a one time poll.
+ *
+ * @param[in]  src      The source object.
+ * @param[in]  ctx      Application context.
+ * @param[in]  data     Unused.
+ *
+ ******************************************************************************
+ */
+
+static void
+AppInfoServerReset(gpointer src,
+                   ToolsAppCtx *ctx,
+                   gpointer data)
+{
+   /*
+    * gAppInfoTimeoutSource is used to figure out if the poll loop is
+    * enabled or not. If the poll loop is disabled, then
+    * gAppInfoTimeoutSource will be set to NULL.
+    */
+   if (gAppInfoTimeoutSource != NULL) {
+      guint interval;
+
+      ASSERT(gAppInfoPollInterval != 0);
+
+#define MIN_APPINFO_INTERVAL 30
+
+      if (gAppInfoPollInterval > MIN_APPINFO_INTERVAL) {
+         GRand *gRand = g_rand_new();
+
+         /*
+          * The RPC channel may get reset due to various conditions like
+          * snapshotting the VM, vmotion the VM, instant cloning of the VM.
+          * In order to avoid potential load spikes in case of instant clones,
+          * randomize the poll interval after a channel reset.
+          */
+
+         interval = g_rand_int_range(gRand,
+                                     MIN_APPINFO_INTERVAL,
+                                     gAppInfoPollInterval);
+         g_rand_free(gRand);
+      } else {
+         interval = gAppInfoPollInterval;
+      }
+
+#undef MIN_APPINFO_INTERVAL
+
+      g_info("%s: Using poll interval: %u.\n", __FUNCTION__, interval);
+
+      TweakGatherLoopEx(ctx, interval);
+   } else {
+      g_debug("%s: Poll loop disabled. Ignoring.\n", __FUNCTION__);
+   }
 }
 
 
@@ -491,7 +644,7 @@ AppInfoServerShutdown(gpointer src,
  */
 
 TOOLS_MODULE_EXPORT ToolsPluginData *
-ToolsOnLoad(ToolsAppCtx *ctx)
+ToolsOnLoad(ToolsAppCtx *ctx)    // IN
 {
    static ToolsPluginData regData = {
       "appInfo",
@@ -499,23 +652,11 @@ ToolsOnLoad(ToolsAppCtx *ctx)
       NULL
    };
 
-   uint32 vmxVersion = 0;
-   uint32 vmxType = VMX_TYPE_UNSET;
-
    /*
     * Return NULL to disable the plugin if not running in a VMware VM.
     */
    if (!ctx->isVMware) {
-      g_info("Not running in a VMware VM.\n");
-      return NULL;
-   }
-
-   /*
-    * Return NULL to disable the plugin if VM is not running on ESX host.
-    */
-   if (!VmCheck_GetVersion(&vmxVersion, &vmxType) ||
-       vmxType != VMX_TYPE_SCALABLE_SERVER) {
-      g_info("VM is not running on ESX host.\n");
+      g_info("%s: Not running in a VMware VM.\n", __FUNCTION__);
       return NULL;
    }
 
@@ -523,8 +664,8 @@ ToolsOnLoad(ToolsAppCtx *ctx)
     * Return NULL to disable the plugin if not running in vmsvc daemon.
     */
    if (!TOOLS_IS_MAIN_SERVICE(ctx)) {
-      g_info("Not running in vmsvc daemon: container name='%s'.\n",
-             ctx->name);
+      g_info("%s: Not running in vmsvc daemon: container name='%s'.\n",
+             __FUNCTION__, ctx->name);
       return NULL;
    }
 
@@ -535,15 +676,14 @@ ToolsOnLoad(ToolsAppCtx *ctx)
    if (ctx->rpc != NULL) {
       ToolsPluginSignalCb sigs[] = {
          { TOOLS_CORE_SIG_CONF_RELOAD, AppInfoServerConfReload, NULL },
-         { TOOLS_CORE_SIG_SHUTDOWN, AppInfoServerShutdown, NULL }
+         { TOOLS_CORE_SIG_SHUTDOWN, AppInfoServerShutdown, NULL },
+         { TOOLS_CORE_SIG_RESET, AppInfoServerReset, NULL }
       };
       ToolsAppReg regs[] = {
          { TOOLS_APP_SIGNALS,
            VMTools_WrapArray(sigs, sizeof *sigs, ARRAYSIZE(sigs))
          }
       };
-
-      gboolean disabled = FALSE;
 
       regData.regs = VMTools_WrapArray(regs,
                                        sizeof *regs,
@@ -552,21 +692,10 @@ ToolsOnLoad(ToolsAppCtx *ctx)
       /*
        * Set up the AppInfo gather loop.
        */
-      disabled =
-         VMTools_ConfigGetBoolean(ctx->config,
-                                  CONFGROUPNAME_APPINFO,
-                                  CONFNAME_APPINFO_DISABLED,
-                                  APP_INFO_CONF_DEFAULT_DISABLED_VALUE);
-      TweakGatherLoop(ctx, !disabled);
+      TweakGatherLoop(ctx);
 
       return &regData;
    }
 
    return NULL;
 }
-
-
-/*
- * END Tools Core Services goodies.
- *****************************************************************************
- */

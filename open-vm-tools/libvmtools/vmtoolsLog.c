@@ -1,5 +1,5 @@
 /*********************************************************
- * Copyright (C) 2008-2019 VMware, Inc. All rights reserved.
+ * Copyright (C) 2008-2020 VMware, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published
@@ -851,13 +851,14 @@ VMToolsGetLogFilePath(const gchar *key,
                       GKeyFile *cfg)
 {
    gsize len = 0;
-   gchar *path = NULL;
    gchar *origPath = NULL;
+   gchar *path = g_key_file_get_string(cfg, LOGGING_GROUP, key, NULL);
 
-   path = g_key_file_get_string(cfg, LOGGING_GROUP, key, NULL);
    if (path == NULL) {
       return VMToolsDefaultLogFilePath(domain);
    }
+
+   g_strchomp(path);
 
    len = strlen(path);
    origPath = path;
@@ -988,6 +989,9 @@ VMToolsGetLogHandler(const gchar *handler,
       /* Always get the facility from the default domain, since syslog is shared. */
       g_snprintf(key, sizeof key, "%s.facility", gLogDomain);
       facility = g_key_file_get_string(cfg, LOGGING_GROUP, key, NULL);
+      if (facility != NULL) {
+         g_strchomp(facility);
+      }
       glogger = GlibUtils_CreateSysLogger(domain, facility);
       /*
        * Older versions of Linux make synchronous call to syslog.
@@ -1090,14 +1094,22 @@ VMToolsConfigLogDomain(const gchar *domain,
    level = g_key_file_get_string(cfg, LOGGING_GROUP, key, NULL);
    if (level == NULL) {
       level = g_strdup(VMTOOLS_LOGGING_LEVEL_DEFAULT);
+   } else {
+      g_strchomp(level);
    }
 
    /* Parse the handler information. */
    g_snprintf(key, sizeof key, "%s.handler", domain);
    handler = g_key_file_get_string(cfg, LOGGING_GROUP, key, NULL);
+   if (handler != NULL) {
+      g_strchomp(handler);
+   }
 
    g_snprintf(key, sizeof key, "%s.data", domain);
    confData = g_key_file_get_string(cfg, LOGGING_GROUP, key, NULL);
+   if (confData != NULL) {
+      g_strchomp(confData);
+   }
 
    /*
     * Disable the old vmx handler if we are setting up the vmx guest logger
@@ -1500,7 +1512,16 @@ VMToolsConfigLoggingInt(const gchar *defaultDomain,
    /* If needed, restore the old configuration. */
    if (!reset) {
       if (oldDomains != NULL) {
+         guint i;
+         for (i = 0; i < oldDomains->len; i++) {
+            LogHandler *old = g_ptr_array_index(oldDomains, i);
+            CLEAR_LOG_HANDLER(old);
+         }
          g_ptr_array_free(oldDomains, TRUE);
+      }
+      if (oldDefault != NULL && oldDefault != gDefaultData) {
+         CLEAR_LOG_HANDLER(oldDefault);
+         oldDefault = NULL;
       }
    }
 
@@ -1817,6 +1838,8 @@ LoadFallbackSetting(GKeyFile *cfg)
       return;
    }
 
+   g_strchomp(handler);
+
    if (strcmp(handler, "vmx") != 0) {
       g_debug("%s.handler is not a vmx handler in config file.\n", gLogDomain);
       g_free(handler);
@@ -1830,6 +1853,8 @@ LoadFallbackSetting(GKeyFile *cfg)
    level = g_key_file_get_string(cfg, LOGGING_GROUP, key, NULL);
    if (NULL == level) {
       level = g_strdup(VMTOOLS_LOGGING_LEVEL_DEFAULT);
+   } else {
+      g_strchomp(level);
    }
 
    /* If guest admin allows debug log messages sent to host, honor it. */
@@ -2572,6 +2597,41 @@ VMTools_SetupVmxGuestLog(gboolean refreshRpcChannel,   // IN
    SetupVmxGuestLogInt(refreshRpcChannel, cfg, level);
 
 done:
+   g_rec_mutex_unlock(&gVmxGuestLogMutex);
+
+   VMTools_ReleaseLogStateLock();
+}
+
+
+/*
+ *******************************************************************************
+ * VMTools_TeardownVmxGuestLog --                                         */ /**
+ *
+ * Destroy the dedicated RPCI channel set up for the Vmx Guest Logging.
+ * This function is called from the tools process exit code path.
+ *
+ *******************************************************************************
+ */
+
+void
+VMTools_TeardownVmxGuestLog(void)
+{
+   /*
+    * In case VMTools_UseVmxGuestLog() is never called.
+    */
+   if (!gUseVmxGuestLog) {
+      return;
+   }
+
+   /*
+    * Acquire the same locks as VMTools_SetupVmxGuestLog.
+    */
+   VMTools_AcquireLogStateLock();
+
+   g_rec_mutex_lock(&gVmxGuestLogMutex);
+
+   DestroyRpcChannel();
+
    g_rec_mutex_unlock(&gVmxGuestLogMutex);
 
    VMTools_ReleaseLogStateLock();

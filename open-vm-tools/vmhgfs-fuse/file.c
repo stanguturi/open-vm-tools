@@ -953,7 +953,7 @@ out:
 int
 HgfsRename(const char* from, const char* to)
 {
-   HgfsReq *req = NULL;
+   HgfsReq *req;
    int result = 0;
    uint32 reqSize;
    HgfsOp opUsed;
@@ -1161,8 +1161,6 @@ HgfsPackSetattrRequest(const char *path,   // IN:  path to file
                        HgfsReq *req)       // IN/OUT: req packet
 {
    HgfsAttrV2 *attrV2;
-   HgfsAttr *attrV1;
-   HgfsAttrChanges *update;
    size_t reqBufferSize;
    size_t reqSize;
    ASSERT(req);
@@ -1297,10 +1295,11 @@ HgfsPackSetattrRequest(const char *path,   // IN:  path to file
    }
    case HGFS_OP_SETATTR: {
       int result;
+      HgfsAttr *attrV1;
       HgfsRequestSetattr *request;
+      HgfsAttrChanges *update;
 
       request = (HgfsRequestSetattr *)(HGFS_REQ_PAYLOAD(req));
-
       attrV1 = &request->attr;
       update = &request->update;
 
@@ -1467,7 +1466,7 @@ HgfsRelease(HgfsHandle handle)  //IN:File handle to close
    HgfsReq *req;
    HgfsOp opUsed;
    HgfsStatus replyStatus;
-   int result = 0;
+   int result;
 
    LOG(6, ("Entry(handle = %u)\n", handle));
 

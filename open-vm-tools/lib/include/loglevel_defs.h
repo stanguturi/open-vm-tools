@@ -1,5 +1,5 @@
 /*********************************************************
- * Copyright (C) 1998-2019 VMware, Inc. All rights reserved.
+ * Copyright (C) 1998-2020 VMware, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published
@@ -87,8 +87,19 @@ int LogLevel_Set(const char *extension, const char *module, int val);
 #define DOLOG_BYNAME(_mod, _min) \
         UNLIKELY(LOGLEVEL_BYNAME(_mod) >= (_min))
 
-#define LOG_BYNAME(_mod, _min, _log) \
-        (DOLOG_BYNAME(_mod, _min) ? (Log _log) : (void) 0)
+/*
+ * Variadic macro wrinkle: C99 says "one or more arguments"; some compilers
+ * (gcc+clang+msvc) support zero arguments, but differ in tolerating a trailing
+ * comma. Solution: include format string in variadic arguments.
+ *
+ * C++2a introduces __VA_OPT__, which would allow this definition instead:
+ * define LOG_BYNAME(_mod, _min, _fmt, ...) \
+ *        (DOLOG_BYNAME(_mod, _min) ? Log(_fmt __VA_OPT__(,) __VA_ARGS__) \
+ *                                  : (void) 0)
+ * MSVC has always ignored a spurious trailing comma, so does not need this.
+ */
+#define LOG_BYNAME(_mod, _min, ...) \
+        (DOLOG_BYNAME(_mod, _min) ? Log(__VA_ARGS__) : (void) 0)
 
 /*
  * Default
@@ -113,7 +124,7 @@ int LogLevel_Set(const char *extension, const char *module, int val);
 
 
 #ifdef VMX86_DEVEL
-   #define LOG_DEVEL(_x) (Log _x)
+   #define LOG_DEVEL(...) Log(__VA_ARGS__)
 #else
    #define LOG_DEVEL(...)
 #endif

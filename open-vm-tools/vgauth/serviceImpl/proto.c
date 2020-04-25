@@ -953,9 +953,8 @@ static GMarkupParser wireParser = {
 ProtoRequest *
 Proto_NewRequest(void)
 {
-   ProtoRequest *req = NULL;
+   ProtoRequest *req = g_malloc0(sizeof(ProtoRequest));
 
-   req = g_malloc0(sizeof(ProtoRequest));
    req->parseState = PARSE_STATE_NONE;
    req->complete = FALSE;
 #if VGAUTH_PROTO_TRACE
@@ -1834,10 +1833,7 @@ ServiceProtoQueryMappedAliases(ServiceConnection *conn,
 {
    VGAuthError err;
    gchar *packet;
-   gchar *endPacket;
    int num;
-   int i;
-   int j;
    ServiceMappedAlias *maList;
 
    /*
@@ -1849,10 +1845,14 @@ ServiceProtoQueryMappedAliases(ServiceConnection *conn,
    if (err != VGAUTH_E_OK) {
       packet = Proto_MakeErrorReply(conn, req, err, "queryMappedIds failed");
    } else {
+      int i;
+      gchar *endPacket;
+
       packet = g_markup_printf_escaped(VGAUTH_QUERYMAPPEDALIASES_REPLY_FORMAT_START,
                                        req->sequenceNumber);
       for (i = 0; i < num; i++) {
          gchar *tPacket;
+         int j;
 
          tPacket = g_markup_printf_escaped(VGAUTH_MAPPEDALIASES_FORMAT_START,
                                            maList[i].userName,
@@ -2104,7 +2104,7 @@ static VGAuthError
 ServiceProtoValidateSamlBearerToken(ServiceConnection *conn,
                                     ProtoRequest *req)
 {
-   VGAuthError err = VGAUTH_E_FAIL;
+   VGAuthError err;
    gchar *packet;
    gchar *sPacket;
    char *userName = NULL;

@@ -1,5 +1,5 @@
 /*********************************************************
- * Copyright (C) 2016-2017,2019 VMware, Inc. All rights reserved.
+ * Copyright (C) 2016-2019 VMware, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published
@@ -1733,9 +1733,11 @@ AsyncSocket_WaitForReadMultiple(AsyncSocket **asock,  // IN
                                 int timeoutMS,        // IN
                                 int *outIdx)          // OUT
 {
-   int i;
    int ret;
+
    if (numSock > 0 && VALID(asock[0], waitForReadMultiple)) {
+      int i;
+
       for (i = 0; i < numSock; i++) {
          AsyncSocketLock(asock[i]);
       }

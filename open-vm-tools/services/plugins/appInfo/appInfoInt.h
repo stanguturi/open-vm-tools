@@ -1,5 +1,5 @@
 /*********************************************************
- * Copyright (C) 2019 VMware, Inc. All rights reserved.
+ * Copyright (C) 2019-2020 VMware, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published
@@ -29,6 +29,7 @@
 #include "vm_basic_types.h"
 #include <glib.h>
 #include "vmware/tools/plugin.h"
+#include "procMgr.h"
 
 #if defined(_WIN32)
 
@@ -57,8 +58,15 @@ typedef struct AppInfo {
 #endif
 } AppInfo;
 
-GSList *AppInfo_GetAppList(void);
+GSList *AppInfo_GetAppList(GKeyFile *config);
 GSList *AppInfo_SortAppList(GSList *appList);
 
 void AppInfo_DestroyAppList(GSList *appList);
+
+#if defined(WIN32)
+AppInfo *AppInfo_GetAppInfo(ProcMgrProcInfo *procInfo, Bool useWMI);
+#else
+AppInfo *AppInfo_GetAppInfo(ProcMgrProcInfo *procInfo);
+#endif
+
 #endif /* _APPINFOINT_H_ */

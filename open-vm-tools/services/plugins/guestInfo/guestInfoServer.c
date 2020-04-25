@@ -210,8 +210,8 @@ GuestInfoVMSupport(RpcInData *data)
 #if defined(_WIN32)
 
     char vmSupportCmd[] = "vm-support.vbs";
-    char *vmSupportPath = NULL;
-    gchar *vmSupport = NULL;
+    char *vmSupportPath;
+    gchar *vmSupport;
 
     SECURITY_ATTRIBUTES saProcess = {0}, saThread = {0};
 
@@ -1035,7 +1035,7 @@ GuestInfoSendData(ToolsAppCtx *ctx,                // IN
    Bool status;
    gchar *request;
    u_int msgLength = infoLength;
-   gchar *message = NULL;
+   gchar *message;
    char *reply = NULL;
    size_t replyLen;
 
@@ -1796,9 +1796,7 @@ static Bool
 DiskInfoChanged(const GuestDiskInfoInt *diskInfo)
 {
    int index;
-   char *name;
    int i;
-   int matchedPartition;
    GuestDiskInfoInt *cachedDiskInfo;
 
    cachedDiskInfo = gInfoCache.diskInfo;
@@ -1817,7 +1815,8 @@ DiskInfoChanged(const GuestDiskInfoInt *diskInfo)
 
    /* Have any disks been modified? */
    for (index = 0; index < cachedDiskInfo->numEntries; index++) {
-      name = cachedDiskInfo->partitionList[index].name;
+      int matchedPartition;
+      char *name = cachedDiskInfo->partitionList[index].name;
 
       /* Find the corresponding partition in the new partition info. */
       for (i = 0; i < diskInfo->numEntries; i++) {
