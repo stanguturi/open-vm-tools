@@ -247,6 +247,15 @@ FileLoggerOpen(FileLogger *data)
       struct stat fstats;
 #endif
 
+      /*
+       * In order to determine whether we should rotate the logs,
+       * we are calling the system call stat() to get the existing log file
+       * size.
+       * The time of check vs. time of use issue does not apply to this use
+       * case, as even the file size is increasing, it will not affect the log
+       * rotation decision. So Suppress the fs_check_call coverity warning.
+       */
+      /* coverity[fs_check_call] */
       if (g_stat(path, &fstats) > -1) {
          data->logSize = (gint) fstats.st_size;
       }
@@ -258,7 +267,6 @@ FileLoggerOpen(FileLogger *data)
           * will always be index "0"). When not rotating, "maxFiles" is 1, so we
           * always keep one backup.
           */
-         gchar *log;
          guint id;
          GPtrArray *logfiles = g_ptr_array_new();
 
@@ -268,7 +276,8 @@ FileLoggerOpen(FileLogger *data)
           * file, which may or may not exist.
           */
          for (id = 0; id < data->maxFiles; id++) {
-            log = FileLoggerGetPath(data, id);
+            gchar *log = FileLoggerGetPath(data, id);
+
             g_ptr_array_add(logfiles, log);
             if (!g_file_test(log, G_FILE_TEST_IS_REGULAR)) {
                break;
@@ -283,6 +292,13 @@ FileLoggerOpen(FileLogger *data)
             if (!g_file_test(dest, G_FILE_TEST_IS_DIR) &&
                 (!g_file_test(dest, G_FILE_TEST_EXISTS) ||
                  g_unlink(dest) == 0)) {
+               /*
+                * We should ignore an unlikely rename() system call failure,
+                * as we should keep our service running with non-critical errors.
+                * We cannot log the error because we are already in the log
+                * handler context to avoid crash or recursive logging loop.
+                */
+               /* coverity[check_return] */
                g_rename(src, dest);
             } else {
                g_unlink(src);
@@ -311,6 +327,7 @@ FileLoggerOpen(FileLogger *data)
 #ifdef _WIN32
       (void) Win32Access_SetFileOwnerRW(path);
 #else
+      /* coverity[toctou] */
       (void) chmod(path, 0600);
 #endif
 #endif // VMX86_TOOLS

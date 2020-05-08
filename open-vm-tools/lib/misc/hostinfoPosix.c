@@ -139,10 +139,12 @@
 #define SYSTEM_BITNESS_32 "i386"
 #define SYSTEM_BITNESS_64_SUN "amd64"
 #define SYSTEM_BITNESS_64_LINUX "x86_64"
+#define SYSTEM_BITNESS_64_ARM_LINUX "aarch64"
 #define SYSTEM_BITNESS_MAXLEN \
    MAX(sizeof SYSTEM_BITNESS_32, \
    MAX(sizeof SYSTEM_BITNESS_64_SUN, \
-       sizeof SYSTEM_BITNESS_64_LINUX))
+   MAX(sizeof SYSTEM_BITNESS_64_LINUX, \
+       sizeof SYSTEM_BITNESS_64_ARM_LINUX)))
 
 struct hostinfoOSVersion {
    int   hostinfoOSVersion[4];
@@ -240,7 +242,7 @@ DetailedDataField detailedDataFields[] = {
    { NULL,            "" },  // MUST BE LAST
 };
 
-#if defined __ANDROID__
+#if defined __ANDROID__ || defined __aarch64__
 /*
  * Android doesn't support getloadavg() or iopl().
  */
@@ -284,13 +286,13 @@ HostinfoOSVersionInit(void)
    }
 
    version = Util_SafeCalloc(1, sizeof *version);
-   version->hostinfoOSVersionString = Util_SafeStrndup(u.release, 
+   version->hostinfoOSVersionString = Util_SafeStrndup(u.release,
                                                        sizeof u.release);
 
    ASSERT(ARRAYSIZE(version->hostinfoOSVersion) >= 4);
 
    /*
-    * The first three numbers are separated by '.', if there is 
+    * The first three numbers are separated by '.', if there is
     * a fourth number, it's probably separated by '.' or '-',
     * but it could be preceded by anything.
     */
@@ -439,7 +441,8 @@ Hostinfo_GetSystemBitness(void)
       return -1;
    }
 
-   if (strstr(u.machine, SYSTEM_BITNESS_64_LINUX)) {
+   if (strstr(u.machine, SYSTEM_BITNESS_64_LINUX) ||
+       strstr(u.machine, SYSTEM_BITNESS_64_ARM_LINUX)) {
       return 64;
    } else {
       return 32;
@@ -733,23 +736,49 @@ static Bool
 HostinfoESX(struct utsname *buf)  // IN:
 {
    int len;
+   uint32 major;
+   uint32 minor;
    char osName[MAX_OS_NAME_LEN];
    char osNameFull[MAX_OS_FULLNAME_LEN];
 
-   /* The most recent osName always goes here. */
-   Str_Strcpy(osName, STR_OS_VMKERNEL "7", sizeof osName);
+   if (sscanf(buf->release, "%u.%u", &major, &minor) != 2) {
+      if (sscanf(buf->release, "%u", &major) != 1) {
+         major = 0;
+      }
 
-   /* Handle any special cases */
-   if ((buf->release[0] <= '4') && (buf->release[1] == '.')) {
+      minor = 0;
+   }
+
+   switch (major) {
+   case 0:
+   case 1:
+   case 2:
+   case 3:
+   case 4:
       Str_Strcpy(osName, STR_OS_VMKERNEL, sizeof osName);
-   } else if ((buf->release[0] == '5') && (buf->release[1] == '.')) {
+      break;
+
+   case 5:
       Str_Strcpy(osName, STR_OS_VMKERNEL "5", sizeof osName);
-   } else if ((buf->release[0] >= '6') && (buf->release[1] == '.')) {
-      if (buf->release[2] < '5') {
+      break;
+
+   case 6:
+      if (minor < 5) {
          Str_Strcpy(osName, STR_OS_VMKERNEL "6", sizeof osName);
       } else {
          Str_Strcpy(osName, STR_OS_VMKERNEL "65", sizeof osName);
       }
+      break;
+
+   case 7:
+   default:
+      /*
+       * New osName are created IFF the VMX/monitor requires them (rare),
+       * not (simply) with every ESXi release.
+       */
+
+      Str_Strcpy(osName, STR_OS_VMKERNEL "7", sizeof osName);
+      break;
    }
 
    len = Str_Snprintf(osNameFull, sizeof osNameFull, "VMware ESXi %s",
@@ -1127,10 +1156,7 @@ out:
    if (success) {
       result[nArgs - 1] = DynBuf_Detach(&b);
    } else {
-      if (nArgs != 0) {
-         Util_FreeStringList(result, nArgs);
-      }
-
+      Util_FreeStringList(result, nArgs);
       result = NULL;
    }
 
@@ -1308,6 +1334,8 @@ HostinfoLsbRemoveQuotes(char *lsbOutput)  // IN/OUT:
 {
    char *lsbStart = lsbOutput;
 
+   ASSERT(lsbStart != NULL);
+
    if (lsbStart[0] == '"') {
       char *quoteEnd = strchr(++lsbStart, '"');
 
@@ -1381,13 +1409,17 @@ HostinfoLsb(char ***args)  // OUT:
 
       /* LSB Distributor */
       lsbOutput = HostinfoGetCmdOutput("/usr/bin/lsb_release -si 2>/dev/null");
-      (*args)[0] = Util_SafeStrdup(HostinfoLsbRemoveQuotes(lsbOutput));
-      free(lsbOutput);
+      if (lsbOutput != NULL) {
+         (*args)[0] = Util_SafeStrdup(HostinfoLsbRemoveQuotes(lsbOutput));
+         free(lsbOutput);
+      }
 
       /* LSB Release */
       lsbOutput = HostinfoGetCmdOutput("/usr/bin/lsb_release -sr 2>/dev/null");
-      (*args)[1] = Util_SafeStrdup(HostinfoLsbRemoveQuotes(lsbOutput));
-      free(lsbOutput);
+      if (lsbOutput != NULL) {
+         (*args)[1] = Util_SafeStrdup(HostinfoLsbRemoveQuotes(lsbOutput));
+         free(lsbOutput);
+      }
 
       /* LSB Description */
       (*args)[3] = Util_SafeStrdup((*args)[fields]);
@@ -2884,7 +2916,10 @@ Hostinfo_Daemonize(const char *path,             // IN: NUL-terminated UTF-8
           * with another process attempting to daemonize and unlinking the
           * file it created instead.
           */
-         Posix_Unlink(pidPath);
+         if (Posix_Unlink(pidPath) != 0) {
+            Warning("%s: Unable to unlink %s: %u\n",
+                    __FUNCTION__, pidPath, errno);
+         }
       }
 
       errno = err;
@@ -2936,10 +2971,11 @@ HostinfoGetCpuInfo(int nCpu,    // IN:
    while (cpu <= nCpu &&
           StdIO_ReadNextLine(f, &line, 0, NULL) == StdIO_Success) {
       char *s;
-      char *e;
 
       if ((s = strstr(line, name)) &&
           (s = strchr(s, ':'))) {
+         char *e;
+
          s++;
          e = s + strlen(s);
 
@@ -3180,16 +3216,16 @@ Hostinfo_Execute(const char *path,   // IN:
 
    if (wait) {
       for (;;) {
-	 if (waitpid(pid, &status, 0) == -1) {
-	    if (errno == ECHILD) {
-	       return 0;	// This sucks.  We really don't know.
-	    }
-	    if (errno != EINTR) {
-	       return -1;
-	    }
-	 } else {
-	    return status;
-	 }
+         if (waitpid(pid, &status, 0) == -1) {
+            if (errno == ECHILD) {
+               return 0;   // This sucks.  We really don't know.
+            }
+            if (errno != EINTR) {
+               return -1;
+            }
+         } else {
+            return status;
+         }
       }
    } else {
       return 0;
@@ -3469,7 +3505,7 @@ NOT_IMPLEMENTED();
  *----------------------------------------------------------------------
  */
 
-static Bool 
+static Bool
 HostinfoFindEntry(char *buffer,         // IN: Buffer
                   char *string,         // IN: String sought
                   unsigned int *value)  // OUT: Value
@@ -3552,7 +3588,7 @@ HostinfoGetMemInfo(char *name,           // IN:
  * HostinfoSysinfo --
  *
  *      Retrieve system information on a Linux system.
- *    
+ *
  * Results:
  *      TRUE on success: '*totalRam', '*freeRam', '*totalSwap' and '*freeSwap'
  *                       are set if not NULL
@@ -3598,7 +3634,7 @@ HostinfoSysinfo(uint64 *totalRam,  // OUT: Total RAM in bytes
    if (sysinfo((struct sysinfo *)&si) < 0) {
       return FALSE;
    }
-   
+
    if (si.mem_unit == 0) {
       /*
        * Kernel versions < 2.3.23. Those kernels used a smaller sysinfo
@@ -3653,10 +3689,10 @@ HostinfoGetLinuxMemoryInfoInPages(unsigned int *minSize,      // OUT:
                                   unsigned int *maxSize,      // OUT:
                                   unsigned int *currentSize)  // OUT:
 {
-   uint64 total; 
+   uint64 total;
    uint64 free;
    unsigned int cached = 0;
-   
+
    /*
     * Note that the free memory provided by linux does not include buffer and
     * cache memory. Linux tries to use the free memory to cache file. Most of
@@ -3723,7 +3759,7 @@ Bool
 Hostinfo_GetSwapInfoInPages(unsigned int *totalSwap,  // OUT:
                             unsigned int *freeSwap)   // OUT:
 {
-   uint64 total; 
+   uint64 total;
    uint64 free;
 
    if (HostinfoSysinfo(NULL, NULL, &total, &free) == FALSE) {
@@ -3812,7 +3848,7 @@ Hostinfo_GetMemoryInfoInPages(unsigned int *minSize,      // OUT:
    *maxSize = memsize / PAGE_SIZE;
    return TRUE;
 #elif defined(VMX86_SERVER)
-   uint64 total; 
+   uint64 total;
    uint64 free;
    VMK_ReturnStatus status;
 

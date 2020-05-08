@@ -78,11 +78,13 @@ DnDUIX11::DnDUIX11(ToolsAppCtx *ctx)
     : mCtx(ctx),
       mDnD(NULL),
       mDetWnd(NULL),
+      mClipboard(),
       mBlockCtrl(NULL),
       mHGGetFileStatus(DND_FILE_TRANSFER_NOT_STARTED),
       mBlockAdded(false),
       mGHDnDInProgress(false),
       mGHDnDDataReceived(false),
+      mGHDnDDropOccurred(false),
       mUnityMode(false),
       mInHGDrag(false),
       mEffect(DROP_NONE),
@@ -93,7 +95,9 @@ DnDUIX11::DnDUIX11(ToolsAppCtx *ctx)
       mDestDropTime(0),
       mTotalFileSize(0),
       mOrigin(0, 0),
-      mUseUInput(false)
+      mUseUInput(false),
+      mScreenWidth(0),
+      mScreenHeight(0)
 {
    TRACE_CALL();
 
@@ -1079,7 +1083,6 @@ DnDUIX11::OnGtkDragDataGet(
    guint info,                                  // UNUSED
    guint time)                                  // IN: event timestamp
 {
-   size_t index = 0;
    std::string str;
    std::string uriList;
    std::string stagingDirName;
@@ -1105,6 +1108,7 @@ DnDUIX11::OnGtkDragDataGet(
 
    if (   target == DRAG_TARGET_NAME_URI_LIST
        && CPClipboard_GetItem(&mClipboard, CPFORMAT_FILELIST, &buf, &sz)) {
+      size_t index = 0;
 
       /* Provide path within vmblock file system instead of actual path. */
       stagingDirName = GetLastDirName(mHGStagingDir);
@@ -1413,10 +1417,6 @@ DnDUIX11::OnGtkDragDrop(
 bool
 DnDUIX11::SetCPClipboardFromGtk(const Gtk::SelectionData& sd) // IN
 {
-   char *newPath;
-   char *newRelPath;
-   size_t newPathLen;
-   size_t index = 0;
    DnDFileList fileList;
    DynBuf buf;
    uint64 totalSize = 0;
@@ -1431,6 +1431,10 @@ DnDUIX11::SetCPClipboardFromGtk(const Gtk::SelectionData& sd) // IN
        * one for just the last path component.
        */
       utf::string source = sd.get_data_as_string().c_str();
+      size_t index = 0;
+      char *newPath;
+      size_t newPathLen;
+
       g_debug("%s: Got file list: [%s]\n", __FUNCTION__, source.c_str());
 
       if (sd.get_data_as_string().length() == 0) {
@@ -1458,6 +1462,8 @@ DnDUIX11::SetCPClipboardFromGtk(const Gtk::SelectionData& sd) // IN
       while ((newPath = DnD_UriListGetNextFile(source.c_str(),
                                                &index,
                                                &newPathLen)) != NULL) {
+         char *newRelPath;
+
 #if defined(__linux__)
          if (DnD_UriIsNonFileSchemes(newPath)) {
             /* Try to get local file path for non file uri. */
@@ -1636,7 +1642,7 @@ DnDUIX11::RequestData(
  *      name, intended to isolate an individual DND operation's staging directory
  *      name.
  *
- *         E.g. /tmp/VMwareDnD/abcd137/foo → abcd137
+ *         E.g. /tmp/VMwareDnD/abcd137 → abcd137
  *
  * Results:
  *      Returns session directory name on success, empty string otherwise.
@@ -1650,26 +1656,22 @@ DnDUIX11::RequestData(
 std::string
 DnDUIX11::GetLastDirName(const std::string &str)
 {
-   std::string ret;
-   size_t start;
-   size_t end;
-
-   end = str.size() - 1;
-   if (end >= 0 && DIRSEPC == str[end]) {
-      end--;
+   char *baseName;
+   std::string stripSlash = str;
+   char *path = File_StripSlashes(stripSlash.c_str());
+   if (path) {
+      stripSlash = path;
+      free(path);
    }
 
-   if (end <= 0 || str[0] != DIRSEPC) {
-      return "";
+   File_GetPathName(stripSlash.c_str(), NULL, &baseName);
+   if (baseName) {
+      std::string s(baseName);
+      free(baseName);
+      return s;
+   } else {
+      return std::string();
    }
-
-   start = end;
-
-   while (str[start] != DIRSEPC) {
-      start--;
-   }
-
-   return str.substr(start + 1, end - start);
 }
 
 

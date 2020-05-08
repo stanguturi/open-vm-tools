@@ -1,5 +1,5 @@
 /*********************************************************
- * Copyright (C) 2008-2019 VMware, Inc. All rights reserved.
+ * Copyright (C) 2008-2020 VMware, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published
@@ -610,14 +610,9 @@ VMToolsLogInt(const gchar *domain,
       data = data->inherited ? gDefaultData : data;
 
       entry = g_malloc0(sizeof(LogEntry));
-      if (entry) {
-         entry->domain = domain ? g_strdup(domain) : NULL;
-         if (domain && !entry->domain) {
-            VMToolsLogPanic();
-         }
-         entry->handler = data;
-         entry->level = level;
-      }
+      entry->domain = g_strdup(domain);
+      entry->handler = data;
+      entry->level = level;
 
       if (gLogIOSuspended && data->needsFileIO) {
          if (gMaxCacheEntries == 0) {
@@ -856,13 +851,14 @@ VMToolsGetLogFilePath(const gchar *key,
                       GKeyFile *cfg)
 {
    gsize len = 0;
-   gchar *path = NULL;
    gchar *origPath = NULL;
+   gchar *path = g_key_file_get_string(cfg, LOGGING_GROUP, key, NULL);
 
-   path = g_key_file_get_string(cfg, LOGGING_GROUP, key, NULL);
    if (path == NULL) {
       return VMToolsDefaultLogFilePath(domain);
    }
+
+   g_strchomp(path);
 
    len = strlen(path);
    origPath = path;
@@ -882,6 +878,11 @@ VMToolsGetLogFilePath(const gchar *key,
    if (len == 0) {
       g_warning("Invalid path for domain '%s'.", domain);
       g_free(origPath);
+      /*
+       * Coverity flags this as a possible copy-paste error but assigning
+       * to path rather than origPath is correct.
+       */
+      /* coverity[copy_paste_error] */
       path = NULL;
    } else {
       /* Drop the trailing '"' chars */
@@ -988,6 +989,9 @@ VMToolsGetLogHandler(const gchar *handler,
       /* Always get the facility from the default domain, since syslog is shared. */
       g_snprintf(key, sizeof key, "%s.facility", gLogDomain);
       facility = g_key_file_get_string(cfg, LOGGING_GROUP, key, NULL);
+      if (facility != NULL) {
+         g_strchomp(facility);
+      }
       glogger = GlibUtils_CreateSysLogger(domain, facility);
       /*
        * Older versions of Linux make synchronous call to syslog.
@@ -1011,7 +1015,7 @@ VMToolsGetLogHandler(const gchar *handler,
    logger->type = strdup(handler);
    logger->needsFileIO = needsFileIO;
    logger->isSysLog = isSysLog;
-   logger->confData = (path != NULL ? g_strdup(path) : NULL);
+   logger->confData = g_strdup(path);
    g_free(path);
 
    return logger;
@@ -1090,14 +1094,22 @@ VMToolsConfigLogDomain(const gchar *domain,
    level = g_key_file_get_string(cfg, LOGGING_GROUP, key, NULL);
    if (level == NULL) {
       level = g_strdup(VMTOOLS_LOGGING_LEVEL_DEFAULT);
+   } else {
+      g_strchomp(level);
    }
 
    /* Parse the handler information. */
    g_snprintf(key, sizeof key, "%s.handler", domain);
    handler = g_key_file_get_string(cfg, LOGGING_GROUP, key, NULL);
+   if (handler != NULL) {
+      g_strchomp(handler);
+   }
 
    g_snprintf(key, sizeof key, "%s.data", domain);
    confData = g_key_file_get_string(cfg, LOGGING_GROUP, key, NULL);
+   if (confData != NULL) {
+      g_strchomp(confData);
+   }
 
    /*
     * Disable the old vmx handler if we are setting up the vmx guest logger
@@ -1817,6 +1829,8 @@ LoadFallbackSetting(GKeyFile *cfg)
       return;
    }
 
+   g_strchomp(handler);
+
    if (strcmp(handler, "vmx") != 0) {
       g_debug("%s.handler is not a vmx handler in config file.\n", gLogDomain);
       g_free(handler);
@@ -1830,6 +1844,8 @@ LoadFallbackSetting(GKeyFile *cfg)
    level = g_key_file_get_string(cfg, LOGGING_GROUP, key, NULL);
    if (NULL == level) {
       level = g_strdup(VMTOOLS_LOGGING_LEVEL_DEFAULT);
+   } else {
+      g_strchomp(level);
    }
 
    /* If guest admin allows debug log messages sent to host, honor it. */
@@ -2572,6 +2588,41 @@ VMTools_SetupVmxGuestLog(gboolean refreshRpcChannel,   // IN
    SetupVmxGuestLogInt(refreshRpcChannel, cfg, level);
 
 done:
+   g_rec_mutex_unlock(&gVmxGuestLogMutex);
+
+   VMTools_ReleaseLogStateLock();
+}
+
+
+/*
+ *******************************************************************************
+ * VMTools_TeardownVmxGuestLog --                                         */ /**
+ *
+ * Destroy the dedicated RPCI channel set up for the Vmx Guest Logging.
+ * This function is called from the tools process exit code path.
+ *
+ *******************************************************************************
+ */
+
+void
+VMTools_TeardownVmxGuestLog(void)
+{
+   /*
+    * In case VMTools_UseVmxGuestLog() is never called.
+    */
+   if (!gUseVmxGuestLog) {
+      return;
+   }
+
+   /*
+    * Acquire the same locks as VMTools_SetupVmxGuestLog.
+    */
+   VMTools_AcquireLogStateLock();
+
+   g_rec_mutex_lock(&gVmxGuestLogMutex);
+
+   DestroyRpcChannel();
+
    g_rec_mutex_unlock(&gVmxGuestLogMutex);
 
    VMTools_ReleaseLogStateLock();

@@ -130,6 +130,7 @@ CopyPasteUIX11::CopyPasteUIX11()
    mPrimTime(0),
    mLastTimestamp(0),
    mThread(0),
+   mHGGetListTime(0),
    mHGGetFileStatus(DND_FILE_TRANSFER_NOT_STARTED),
    mBlockAdded(false),
    mBlockCtrl(0),
@@ -990,7 +991,6 @@ CopyPasteUIX11::LocalGetSelectionFileList(const Gtk::SelectionData& sd)      // 
 {
    utf::string source;
    char *newPath;
-   char *newRelPath;
    size_t newPathLen;
    size_t index = 0;
    DnDFileList fileList;
@@ -1025,6 +1025,8 @@ CopyPasteUIX11::LocalGetSelectionFileList(const Gtk::SelectionData& sd)      // 
    while ((newPath = DnD_UriListGetNextFile(source.c_str(),
                                             &index,
                                             &newPathLen)) != NULL) {
+      char *newRelPath;
+
 #if defined(__linux__)
       if (DnD_UriIsNonFileSchemes(newPath)) {
          /* Try to get local file path for non file uri. */
@@ -1090,26 +1092,11 @@ CopyPasteUIX11::LocalGetSelectionFileList(const Gtk::SelectionData& sd)      // 
 utf::string
 CopyPasteUIX11::GetLastDirName(const utf::string &str)     // IN
 {
-   utf::string ret;
-   size_t start;
-   size_t end;
-
-   end = str.bytes() - 1;
-   if (end >= 0 && DIRSEPC == str[end]) {
-      end--;
-   }
-
-   if (end <= 0 || str[0] != DIRSEPC) {
-      return "";
-   }
-
-   start = end;
-
-   while (str[start] != DIRSEPC) {
-      start--;
-   }
-
-   return str.substr(start + 1, end - start);
+   char *baseName;
+   File_GetPathName(str.c_str(), NULL, &baseName);
+   utf::string s(baseName);
+   free(baseName);
+   return s;
 }
 
 
