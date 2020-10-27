@@ -1,5 +1,5 @@
 /*********************************************************
- * Copyright (C) 2011-2016 VMware, Inc. All rights reserved.
+ * Copyright (C) 2011-2016,2020 VMware, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published
@@ -141,6 +141,9 @@ Pref_GetString(PrefHandle ph,
               prefName, gErr->message);
       g_error_free(gErr);
       retVal = g_strdup(defaultVal);
+   } else {
+      /* Remove any trailing whitespace. */
+      g_strchomp(retVal);
    }
 
    return retVal;
@@ -264,7 +267,7 @@ Pref_LogAllEntries(const PrefHandle ph)
                                      groupNames[i],
                                      &numKeys,
                                      &gErr);
-      if ((NULL == keyNames) && (NULL != gErr)) {
+      if (NULL != gErr) {
          g_warning("%s: g_key_file_get_keys(%s) failed: %s\n",
                    __FUNCTION__, groupNames[i], gErr->message);
          g_error_free(gErr);

@@ -27,8 +27,6 @@
 #ifndef __CONF_H__
 #define __CONF_H__
 
-#include "guestApp.h"
-
 #define CONF_FILE         "tools.conf"
 
 #if ! defined(_WIN32)
@@ -139,6 +137,21 @@
 #define CONFGROUPNAME_GUESTSTOREUPGRADE "guestStoreUpgrade"
 
 /**
+ * Defines the value for GuestStore upgrade feature to be enabled or not.
+ *
+ * @note Illegal values result in a @c g_warning and fallback to the default
+ * value.
+ *
+ * @param string  Set to "off" no tools upgrade from GuestStore.
+ *                Set to "manual" tools upgrade from GuestStore manual start.
+ *                Set to "immediate" tools upgrade from GuestStore start
+ *                automatically checking on the poll-interval frequency.
+ *                Set to "powercycle" tools upgrade from GuestStore on system
+ *                power on.
+ */
+#define CONFNAME_GUESTSTOREUPGRADE_POLICY "policy"
+
+/**
  * Define a custom GuestStore Upgrade poll interval (in seconds).
  *
  * @note Illegal values result in a @c g_warning and fallback to the default
@@ -147,17 +160,6 @@
  * @param int   User-defined poll interval.  Set to 0 to disable polling.
  */
 #define CONFNAME_GUESTSTOREUPGRADE_POLLINTERVAL "poll-interval"
-
-/**
- * Defines the value for GuestStore upgrade feature to be enabled or not.
- *
- * @note Illegal values result in a @c g_warning and fallback to the default
- * value.
- *
- * @param boolean Set to TRUE to disable publishing.
- *                Set to FALSE to enable publishing.
- */
-#define CONFNAME_GUESTSTOREUPGRADE_DISABLED "disabled"
 
 /**
  * Defines the value for GuestStore upgrade to upgrade or not.
@@ -301,6 +303,15 @@
  * @param boolean Set to true to report UUID to VMX.
  */
 #define CONFNAME_DISKINFO_REPORT_UUID "diskinfo-report-uuid"
+
+/**
+ * Avoid buggy USB driver when querying disks for UUID.
+ * Turning this on can result in a major delay if the vmdk is
+ * being replicated.  See PR 2575285, 26539.
+ *
+ * @param boolean Set to true to work around buggy 3rd party driver.
+ */
+#define CONFNAME_DISKINFO_DRIVER_WORKAROUND "diskinfo-usb-workaround"
 
 /**
  * Report Linux disk device for vmdk mapping via vim.
@@ -486,4 +497,23 @@
  ******************************************************************************
  */
 
+/*
+ ******************************************************************************
+ * BEGIN CarbonBlack helper plugin goodies.
+ */
+
+/**
+ * Define the string used for cbhelper config file group
+ */
+#define CONFGROUPNAME_CBHELPER "cbhelper"
+
+/**
+ * Defines user-defined polling interval in seconds.
+ */
+#define CONFNAME_CBHELPER_POLLINTERVAL "poll-interval"
+
+/*
+ ******************************************************************************
+ * END CarbonBlack helper plugin goodies.
+ */
 #endif /* __CONF_H__ */

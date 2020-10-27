@@ -50,6 +50,9 @@
 /** Reply from host when the command is not recognized. */
 #define RPCI_UNKNOWN_COMMAND      "Unknown command"
 
+/** Reply from the guest when the command is not recognized. */
+#define GUEST_RPC_UNKNOWN_COMMAND "Unknown Command"
+
 #define GUESTRPC_TCLO_VSOCK_LISTEN_PORT      975
 #define GUESTRPC_RPCI_VSOCK_LISTEN_PORT      976
 
@@ -65,6 +68,7 @@
 #define TOOLSOPTION_LINK_ROOT_HGFS_SHARE          "linkRootHgfsShare"
 #define TOOLSOPTION_ENABLE_MESSAGE_BUS_TUNNEL     "enableMessageBusTunnel"
 #define TOOLSOPTION_GUEST_LOG_LEVEL               "guestLogLevel"
+#define TOOLSOPTION_ENABLE_APPINFO                "enableAppInfo"
 
 /*
  * Auto-upgrade commands.

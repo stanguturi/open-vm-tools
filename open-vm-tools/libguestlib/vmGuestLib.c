@@ -1,5 +1,5 @@
 /*********************************************************
- * Copyright (C) 2005-2016,2019 VMware, Inc. All rights reserved.
+ * Copyright (C) 2005-2016,2019-2020 VMware, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published
@@ -27,6 +27,7 @@
 #include "vmGuestLib.h"
 #include "vmGuestLibInt.h"
 #include "str.h"
+#include "vmware/guestrpc/tclodefs.h"
 #include "vmware/tools/guestrpc.h"
 #include "vmcheck.h"
 #include "util.h"
@@ -40,7 +41,7 @@
 
 #define GUESTLIB_NAME "VMware Guest API"
 
-/* 
+/*
  * These are client side data structures, separate from the wire data formats
  * (VMGuestLibDataV[23]).
  */
@@ -60,7 +61,7 @@ typedef struct {
     * Statistics.
     *
     * dataSize is the size of the buffer pointed to by 'data'.
-    * For v2 protocol: 
+    * For v2 protocol:
     *   - 'data' points to VMGuestLibDataV2 struct,
     * For v3 protocol:
     *   - 'data' points to VMGuestLibStatisticsV3 struct.
@@ -260,7 +261,7 @@ VMGuestLib_OpenHandle(VMGuestLibHandle *handle) // OUT
    VMGuestLibHandleType *data;
 
    if (!VmCheck_IsVirtualWorld()) {
-      Debug("VMGuestLib_OpenHandle: Not in a VM.\n");
+      Debug("%s: Not in a VM.\n", __FUNCTION__);
       return VMGUESTLIB_ERROR_NOT_RUNNING_IN_VM;
    }
 
@@ -270,7 +271,7 @@ VMGuestLib_OpenHandle(VMGuestLibHandle *handle) // OUT
 
    data = Util_SafeCalloc(1, sizeof *data);
    if (!data) {
-      Debug("VMGuestLib_OpenHandle: Unable to allocate memory\n");
+      Debug("%s: Unable to allocate memory\n", __FUNCTION__);
       return VMGUESTLIB_ERROR_MEMORY;
    }
 
@@ -353,7 +354,7 @@ VMGuestLibUpdateInfo(VMGuestLibHandle handle) // IN
    VMGuestLibError ret = VMGUESTLIB_ERROR_INVALID_ARG;
    uint32 hostVersion = HANDLE_VERSION(handle);
 
-   /* 
+   /*
     * Starting with the highest supported protocol (major) version, negotiate
     * down to the highest host supported version. Host supports minimum version
     * 2.
@@ -395,15 +396,22 @@ VMGuestLibUpdateInfo(VMGuestLibHandle handle) // IN
          break;
       }
 
-      /* 
-       * Host is older and doesn't support the requested protocol version.
-       * Request the highest version the host supports.
-       */
-      Debug("Failed to retrieve info: %s\n", reply ? reply : "NULL");
+      Debug("%s: Failed to retrieve info: %s\n",
+            __FUNCTION__, reply ? reply : "NULL");
 
-      if (hostVersion == 2 ||
-          Str_Strncmp(reply, "Unknown command", sizeof "Unknown command") == 0) {
-         /* 
+      /*
+       * See why the request failed and either attempt a recovery action or
+       * set an appropriate error code.  If the problem is that the host
+       * is older and doesn't support the requested protocol version, then
+       * try to determine the highest version the host supports and use that.
+       */
+      if (reply == NULL) {
+         ret = VMGUESTLIB_ERROR_OTHER;
+         break;
+      } else if (hostVersion == 2 ||
+          Str_Strncmp(reply, RPCI_UNKNOWN_COMMAND,
+                      sizeof RPCI_UNKNOWN_COMMAND) == 0) {
+         /*
           * Host does not support this feature. Older (v2) host would return
           * "Unsupported version" if it doesn't recognize the requested version.
           *
@@ -414,20 +422,20 @@ VMGuestLibUpdateInfo(VMGuestLibHandle handle) // IN
          break;
       } else if (hostVersion == 3) {
          /*
-          * Host supports v2 at a minimum. If request for v3 fails, then just use
-          * v2, since v2 host does not send the highest supported version in the
-          * reply.
+          * Host supports v2 at a minimum. If request for v3 fails, then just
+          * use v2, since v2 host does not send the highest supported version
+          * in the reply.
           */
          hostVersion = 2;
          HANDLE_SESSIONID(handle) = 0;
          continue;
       } else if (!StrUtil_GetNextUintToken(&hostVersion, &index, reply, ":")) {
          /*
-          * v3 and onwards, the host returns the highest major version it supports,
-          * if the requested version is not supported. So parse out the host
-          * version from the reply and return error if it didn't.
+          * v3 and onwards, the host returns the highest major version it
+          * supports, if the requested version is not supported. So parse
+          * out the host version from the reply and return error if it didn't.
           */
-         Debug("Bad reply received from host.\n");
+         Debug("%s: Bad reply received from host.\n", __FUNCTION__);
          ret = VMGUESTLIB_ERROR_OTHER;
          break;
       }
@@ -440,7 +448,7 @@ VMGuestLibUpdateInfo(VMGuestLibHandle handle) // IN
 
    /* Sanity check the results. */
    if (replyLen < sizeof hostVersion) {
-      Debug("Unable to retrieve version\n");
+      Debug("%s: Unable to retrieve version\n", __FUNCTION__);
       ret = VMGUESTLIB_ERROR_OTHER;
       goto done;
    }
@@ -451,12 +459,12 @@ VMGuestLibUpdateInfo(VMGuestLibHandle handle) // IN
 
       /* More sanity checks. */
       if (v2reply->hdr.version != hostVersion) {
-         Debug("Incorrect data version returned\n");
+         Debug("%s: Incorrect data version returned\n", __FUNCTION__);
          ret = VMGUESTLIB_ERROR_OTHER;
          goto done;
       }
       if (replyLen != dataSize) {
-         Debug("Incorrect data size returned\n");
+         Debug("%s: Incorrect data size returned\n", __FUNCTION__);
          ret = VMGUESTLIB_ERROR_OTHER;
          goto done;
       }
@@ -485,12 +493,12 @@ VMGuestLibUpdateInfo(VMGuestLibHandle handle) // IN
 
       /* More sanity checks. */
       if (v3reply->hdr.version != hostVersion) {
-         Debug("Incorrect data version returned\n");
+         Debug("%s: Incorrect data version returned\n", __FUNCTION__);
          ret = VMGUESTLIB_ERROR_OTHER;
          goto done;
       }
       if (replyLen < sizeof *v3reply) {
-         Debug("Incorrect data size returned\n");
+         Debug("%s: Incorrect data size returned\n", __FUNCTION__);
          ret = VMGUESTLIB_ERROR_OTHER;
          goto done;
       }
@@ -499,7 +507,7 @@ VMGuestLibUpdateInfo(VMGuestLibHandle handle) // IN
       HANDLE_VERSION(handle) = v3reply->hdr.version;
       HANDLE_SESSIONID(handle) = v3reply->hdr.sessionId;
 
-      /* 
+      /*
        * 1. Retrieve the length of the statistics array from the XDR encoded
        * part of the reply.
        */
@@ -510,7 +518,7 @@ VMGuestLibUpdateInfo(VMGuestLibHandle handle) // IN
          goto done;
       }
       if (count >= GUESTLIB_MAX_STATISTIC_ID) {
-         /* 
+         /*
           * Host has more than we can process. So process only what this side
           * can.
           */
@@ -544,7 +552,7 @@ VMGuestLibUpdateInfo(VMGuestLibHandle handle) // IN
       if (count >= v3stats->numStats) {
          ret = VMGUESTLIB_ERROR_SUCCESS;
       } else {
-         /* 
+         /*
           * Error while unmarshalling. Deep-free already unmarshalled
           * statistics and invalidate the data in the handle.
           */
@@ -603,7 +611,7 @@ VMGuestLib_UpdateInfo(VMGuestLibHandle handle) // IN
 
    error = VMGuestLibUpdateInfo(handle);
    if (error != VMGUESTLIB_ERROR_SUCCESS) {
-      Debug("VMGuestLibUpdateInfo failed: %d\n", error);
+      Debug("%s failed: %d\n", __FUNCTION__, error);
       HANDLE_SESSIONID(handle) = 0;
       return error;
    }
@@ -670,7 +678,7 @@ VMGuestLibGetStatisticsV3(VMGuestLibHandle handle,   // IN
    VMGuestLibStatisticsV3 *stats = HANDLE_DATA(handle);
    uint32 statIdx = statId - 1;
 
-   /* 
+   /*
     * Check that the requested statistic is supported by the host. V3 host sends
     * all the available statistics, in order. So any statistics that were added
     * to this version of guestlib, but unsupported by the host, would not be
@@ -1512,9 +1520,12 @@ VMGuestLib_GetHostMemPhysFreeMB(VMGuestLibHandle handle,    // IN
 /*
  *-----------------------------------------------------------------------------
  *
- * VMGuestLib_GetHostMemUsedMB --
+ * VMGuestLib_GetHostMemKernOvhdMB --
  *
  *      Total host kernel memory overhead.
+ *
+ *      Note: This function is deprecated. Will be removed in the future
+ *      releases. hostMemKernOvhdMB is always set to 0.
  *
  * Results:
  *      VMGuestLibError
@@ -1529,10 +1540,18 @@ VMGuestLibError
 VMGuestLib_GetHostMemKernOvhdMB(VMGuestLibHandle handle,     // IN
                                 uint64 *hostMemKernOvhdMB)   // OUT
 {
-   VMGuestLibError error = VMGUESTLIB_ERROR_OTHER;
-   VMGUESTLIB_GETSTAT_V3(handle, error,
-                         hostMemKernOvhdMB, hostMemKernOvhdMB,
-                         GUESTLIB_HOST_MEM_KERN_OVHD_MB);
+   void *data;
+   VMGuestLibError error;
+
+   error = VMGuestLibCheckArgs(handle, hostMemKernOvhdMB, &data);
+   if (VMGUESTLIB_ERROR_SUCCESS != error) {
+      return error;
+   }
+
+   Debug("%s API is deprecated and will be removed in the future releases.\n",
+         __FUNCTION__);
+
+   *hostMemKernOvhdMB = 0;
    return error;
 }
 
