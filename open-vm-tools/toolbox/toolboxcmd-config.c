@@ -1,5 +1,5 @@
 /*********************************************************
- * Copyright (C) 2016 VMware, Inc. All rights reserved.
+ * Copyright (C) 2016,2020-2021 VMware, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published
@@ -116,6 +116,7 @@ ConfigGet(const char *section,      // section
                       NULL);
 
    if (confDict) {
+      TOOLBOXCMD_LOAD_GLOBALCONFIG(confDict)
       value = g_key_file_get_string(confDict, section,
                                     key, NULL);
    } else {
@@ -288,6 +289,8 @@ Config_Help(const char *progName, // IN: The name of the program obtained from a
                "Usage: %s %s <subcommand>\n\n"
                "Subcommands:\n"
                "   get <section> <key>: display current value for <key>\n"
+               "   NOTE: If the <key> is not present in tools.conf, its\n"
+               "   value from the global configuration is returned if present\n"
                "   set <section> <key> <value>: set <key> to <value>\n\n"
                "   remove <section> <key>: remove <key>\n\n"
                "<section> can be any supported section, such as logging, guestoperations or guestinfo.\n"

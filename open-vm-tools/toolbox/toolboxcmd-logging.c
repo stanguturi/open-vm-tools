@@ -1,5 +1,5 @@
 /*********************************************************
- * Copyright (C) 2015-2016 VMware, Inc. All rights reserved.
+ * Copyright (C) 2015-2016,2020-2021 VMware, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published
@@ -164,6 +164,8 @@ LoggingGetLevel(char *service)         // service
       confDict = g_key_file_new();
    }
 
+   TOOLBOXCMD_LOAD_GLOBALCONFIG(confDict)
+
    confName = g_strdup_printf("%s.level", service);
 
    level = g_key_file_get_string(confDict, LOGGING_CONF_SECTION,
@@ -277,6 +279,8 @@ Logging_Help(const char *progName, // IN: The name of the program obtained from 
                "Usage: %s %s level <subcommand> <servicename> <level>\n\n"
                "Subcommands:\n"
                "   get <servicename>: display current level\n"
+               "   NOTE: If the level is not present in tools.conf, its\n"
+               "   value from the global configuration is returned if present\n"
                "   set <servicename> <level>: set current level\n\n"
                "<servicename> can be any supported service, such as vmsvc or vmusr\n"
                "<level> can be one of error, critical, warning, info, message, debug\n"
